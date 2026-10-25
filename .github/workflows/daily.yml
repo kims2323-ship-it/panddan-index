@@ -8,6 +8,8 @@ jobs:
   report:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: write   # seed/fng_cnn.csv 누적 커밋용
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -27,3 +29,9 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           ECOS_API_KEY: ${{ secrets.ECOS_API_KEY }}
+      - name: CNN 실측 누적분 커밋
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add seed/fng_cnn.csv
+          git diff --cached --quiet || { git commit -m "chore: CNN 공포탐욕 실측 누적 $(date +%F)"; git push; }

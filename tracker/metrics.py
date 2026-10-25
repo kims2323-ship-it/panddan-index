@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 
 
@@ -16,6 +17,7 @@ class Metric:
     decimals: int = 2
     note: str = ""                # 수집 상태/주석
     monthly: bool = False
+    est: Optional[pd.Series] = None   # 실측 공백을 메운 추정 구간(차트에 점선)
 
     @property
     def ok(self) -> bool:
@@ -83,16 +85,30 @@ def _trim(s, start="2020-01-01"):
     return None if s is None else s[s.index >= start]
 
 
+def fng_with_estimates(exact: pd.Series, proxy: Optional[pd.Series]):
+    """CNN 실측 + 공백(±4일 내 실측 없음)·최신 이후는 자체산출을 실측에 선형 보정해 채운다. (합친 시리즈, 추정 시리즈)"""
+    if proxy is None or len(proxy) < 100:
+        return exact, pd.Series(dtype=float)
+    ov = pd.concat([exact, proxy], axis=1, keys=["e", "p"]).dropna()
+    b, a = np.polyfit(ov["p"], ov["e"], 1)
+    cal = (a + b * proxy).clip(0, 100).round(1)
+    near = exact.reindex(proxy.index, method="nearest", tolerance=pd.Timedelta(days=4))
+    est = cal[near.isna() & (proxy.index >= exact.index[0])]
+    return exact.combine_first(est).sort_index(), est
+
+
 def build(raw: dict) -> tuple[list[Metric], list[Metric]]:
     g = lambda k: raw[k][0]
     st = lambda k: raw[k][1]
 
-    # 공포탐욕: CNN 이 정상이면 CNN, 아니면 자체산출 대체
-    if g("fng") is not None and st("fng") == "ok":
-        fng = Metric("fng", "공포탐욕지수", _trim(g("fng")), "", 1, "ok")
+    # 공포탐욕: CNN 실측(시드+수집) 우선, 실측 공백/최신 이후만 보정한 자체산출로 보충
+    if g("fng") is not None:
+        full, est = fng_with_estimates(g("fng"), g("fng_proxy"))
+        tail_est = len(est) and est.index.max() > g("fng").index.max()
+        note = "자체산출(최신 CNN 수집 실패 → 보정 추정)" if tail_est else "ok"
+        fng = Metric("fng", "공포탐욕지수", _trim(full), "", 1, note, est=_trim(est) if len(est) else None)
     elif g("fng_proxy") is not None:
-        fng = Metric("fng", "공포탐욕지수", _trim(g("fng_proxy")), "", 1,
-                     "자체산출(CNN 차단 → VIX·모멘텀·52주고점·안전자산 4요소)")
+        fng = Metric("fng", "공포탐욕지수", _trim(g("fng_proxy")), "", 1, "자체산출(CNN 데이터 없음)")
     else:
         fng = Metric("fng", "공포탐욕지수", None, "", 1, st("fng"))
     daily = [

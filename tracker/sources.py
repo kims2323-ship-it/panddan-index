@@ -15,6 +15,7 @@ from . import env
 
 START = "2020-01-01"
 DATA = env.ROOT / "data"
+SEED = env.ROOT / "seed"          # git 에 커밋되는 누적 데이터 (CNN 공포탐욕 실측)
 TIMEOUT = 40
 
 # ECOS 코드: (통계표코드, 주기, 항목코드). `python3 main.py ecos-find <키워드>` 로 찾는다.
@@ -56,6 +57,26 @@ def cnn_fng() -> pd.Series:
     pts = r.json()["fear_and_greed_historical"]["data"]
     s = pd.Series({pd.to_datetime(p["x"], unit="ms").normalize(): float(p["y"]) for p in pts})
     return s.sort_index()
+
+
+def fng_mirror() -> pd.Series:
+    """CNN 직접 수집이 막힐 때: 제3자가 GitHub Actions 로 CNN 공식 값을 받아 공개하는 최신 1건(latest.json).
+    2026-10-25 기준 CNN 차트와 일치함을 확인했으나 외부 개인 저장소라 언제든 끊길 수 있다."""
+    j = _get("https://raw.githubusercontent.com/zzt372/cnn-fear-greed-monitor/HEAD/latest.json").json()
+    sc = j.get("score")
+    if not j.get("ok") or not isinstance(sc, (int, float)) or not 0 <= sc <= 100 or not j.get("timestamp"):
+        raise SourceError("공개 미러 값 검증 실패")
+    return pd.Series({pd.Timestamp(j["timestamp"][:10]): round(float(sc), 1)})
+
+
+def fng_live() -> pd.Series:
+    errs = []
+    for fn in (cnn_fng, fng_mirror):
+        try:
+            return fn()
+        except SourceError as e:
+            errs.append(str(e))
+    raise SourceError(" / ".join(errs))
 
 
 def shiller_pe_us() -> pd.Series:
@@ -148,10 +169,10 @@ def fng_proxy() -> pd.Series:
     return pd.concat(comps, axis=1).mean(axis=1).rolling(5).mean().dropna().round(1)
 
 
-def cached(name: str, fetch: Callable[[], pd.Series]) -> Tuple[Optional[pd.Series], str]:
+def cached(name: str, fetch: Callable[[], pd.Series], path: Optional[Path] = None) -> Tuple[Optional[pd.Series], str]:
     """(series, status). status: 'ok' 또는 사유 문자열(캐시 사용/없음)."""
     DATA.mkdir(exist_ok=True)
-    path = DATA / f"{name}.csv"
+    path = path or DATA / f"{name}.csv"
     old = None
     if path.exists():
         df = pd.read_csv(path, index_col=0, parse_dates=True)
@@ -169,8 +190,7 @@ def cached(name: str, fetch: Callable[[], pd.Series]) -> Tuple[Optional[pd.Serie
 def collect() -> dict:
     """원천 시리즈 전부 수집. {name: (series|None, status)}"""
     jobs = {
-        "fng": cnn_fng,
-        "sp500": lambda: fred("SP500", "2018-01-01"),
+                "sp500": lambda: fred("SP500", "2018-01-01"),
         "vix": lambda: fred("VIXCLS", "2018-01-01"),
         "dgs10": lambda: fred("DGS10", "2018-01-01"),
         "kospi": naver_kospi,
@@ -183,7 +203,7 @@ def collect() -> dict:
         "kr_m2_imf": imf_kr_m2,
         "kr_mcap_gdp": wb_kr_mcap_gdp,
     }
-    out = {}
+    out = {"fng": cached("fng", fng_live, SEED / "fng_cnn.csv")}
     for name, fn in jobs.items():
         out[name] = cached(name, fn)
         time.sleep(0.5)

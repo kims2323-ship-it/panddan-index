@@ -48,7 +48,12 @@ def daily(metrics: list[Metric], stamp: str):
             for lo, hi, c, _ in ZONES:
                 ax.axhspan(lo, hi, color=c, alpha=0.10, lw=0)
             ax.set_ylim(0, 100)
-        ax.plot(s.index, s.values, color=col, lw=1.2)
+        if m.est is not None and len(m.est):
+            ax.plot(s.index, s.values, color="#aaaaaa", lw=1.0, ls=":")
+            ax.plot(s.index, s.where(~s.index.isin(m.est.index)).values, color=col, lw=1.2)
+            ax.text(0.01, 0.84, "실선: CNN 실측 / 점선: 실측 공백 구간 추정", transform=ax.transAxes, fontsize=8, color="#666")
+        else:
+            ax.plot(s.index, s.values, color=col, lw=1.2)
         d, v = m.latest()
         ax.scatter([d], [v], color=col, zorder=3)
         ax.annotate(f"{v:,.{m.decimals}f}", (d, v), textcoords="offset points", xytext=(-6, 8), ha="right", fontsize=9)
