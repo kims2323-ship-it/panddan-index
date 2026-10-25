@@ -1,0 +1,29 @@
+name: daily-report
+on:
+  schedule:
+    - cron: "30 0 * * *"   # 00:30 UTC = 09:30 KST (GitHub 사정으로 수 분~수십 분 지연될 수 있음)
+  workflow_dispatch: {}      # 수동 실행 버튼
+concurrency: daily-report
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq fonts-nanum
+      - run: pip install -r requirements.txt
+      # 수집 캐시(data/)를 실행 간에 유지 — 공포탐욕지수 등 실패 시 캐시 대체용
+      - uses: actions/cache@v4
+        with:
+          path: data
+          key: data-${{ github.run_id }}
+          restore-keys: data-
+      - run: python main.py
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ECOS_API_KEY: ${{ secrets.ECOS_API_KEY }}
